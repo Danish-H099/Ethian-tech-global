@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   useStripe, 
   useElements,
   PaymentElement,
-  LinkAuthenticationElement
+  LinkAuthenticationElement,
+  AddressElement
 } from '@stripe/react-stripe-js';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
@@ -13,9 +14,10 @@ import {
   faInfoCircle
 } from '@fortawesome/free-solid-svg-icons';
 import PropTypes from 'prop-types';
-import { errorMap } from '../utils/errorMap';
 import { ErrorScreen, SuccessScreen } from './PaymentStatusComponents';
 import { useCoursePurchases } from '../context/CoursePurchasesContext';
+import { useAuth } from '../context/AuthContext'; 
+import { normalizeError, handlePaymentError } from '../utils/errorMap';
 
 const PaymentForm = ({ 
   clientSecret,
@@ -25,12 +27,21 @@ const PaymentForm = ({
 }) => {
   const stripe = useStripe();
   const elements = useElements();
-  const [email, setEmail] = useState('');
   const [paymentStatus, setPaymentStatus] = useState('idle');
   const [requiresAction, setRequiresAction] = useState(false);
   const [error, setError] = useState(null);
   const [retryCount, setRetryCount] = useState(-1);
   const { startPaymentProcessing } = useCoursePurchases();
+  const [addressComplete, setAddressComplete] = useState(false);
+  const [consentChecked, setConsentChecked] = useState(false); 
+  const { user } = useAuth(); 
+
+  // Keep email in sync between LinkAuthenticationElement and AddressElement
+  useEffect(() => {
+    if (user?.email && !email) {
+      setEmail(user.email);
+    }
+  }, [user, email]);
 
   const amountFormatted = useMemo(() => 
     new Intl.NumberFormat(navigator.language, {
@@ -45,35 +56,53 @@ const PaymentForm = ({
     setRetryCount(retry => retry + 1);
   }
 
-  const handlePaymentError = (error) => {
-    let code = error.code || (error.type ? error.type.replace(/\s+/g, '_').toLowerCase() : undefined);
-    let message = error.message || 'Payment processing failed';
-    
-    if (!code || !errorMap[code]) {
-      code = 'unknown_error';
-    }
-    
-    setError({
-      code,
-      message: errorMap[code] || message,
-    });
+  const handleAddressChange = (event) => {
+    setAddressComplete(event.complete);
   };
+
+  const paymentElementOptions = useMemo(() => ({
+    wallets: { applePay: 'auto', googlePay: 'auto' },
+    layout: { type: 'tabs', defaultCollapsed: false },
+    defaultValues: {
+      billingDetails: {
+        name: user?.name || '',
+        email: user?.email || '',
+        phone: user?.phoneNo || ''
+      }
+    }
+  }), [user]);
+
+  const addressElementOptions = useMemo(() => ({
+    mode: 'billing',
+    fields: { phone: 'always' },
+    validation: { phone: { required: 'always' } },
+    autocomplete: { mode: 'automatic' },
+    defaultValues: {
+      name: user?.name || '',
+      phone: user?.phoneNo || '',
+    }
+  }), [user]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!stripe || !elements || paymentStatus === 'processing') return;
+    if (!addressComplete) {
+      setError(normalizeError({ code: 'address_incomplete', message: 'Please complete your billing address and phone number.' }));
+      return;
+    }
+    if (!consentChecked) {
+      setError(normalizeError({ code: 'consent_required', message: 'You must agree to the Terms of Service and Refund Policy to proceed.' }));
+      return;
+    }
 
     const { error: elementsError } = await elements.submit();
     if (elementsError) {
+      setError(handlePaymentError(elementsError));
       return;
     }
 
     if (retryCount >= 5) {
-      setError({
-        code: 'max_retries_reached',
-        message: 'Maximum retry attempts reached. Please start over.',
-        type: 'card_error',
-      });
+      setError(normalizeError({ code: 'max_retries_reached', message: 'Maximum retry attempts reached. Please start over.' }));
       return;
     }
 
@@ -86,23 +115,23 @@ const PaymentForm = ({
         elements,
         clientSecret,
         confirmParams: {
-          receipt_email: email,
+          receipt_email: user?.email || '',
           return_url: `${window.location.origin}/payment-redirect`,
           payment_method_data: {
             billing_details: {
-              email: email,
-            },
-          },
+              name: user?.name || '',
+              email: user?.email || '',
+              phone: user?.phoneNo || ''
+            }
+          }
         },
         redirect: 'if_required'
       });
 
       if (confirmError) {
-        throw {
-          code: confirmError.code,
-          message: confirmError.message,
-          type: confirmError.type,
-        };
+        setError(handlePaymentError(confirmError));
+        setPaymentStatus('failed');
+        return;
       }
 
       if (paymentIntent?.status === 'succeeded' || paymentIntent?.status === 'processing') {
@@ -118,7 +147,7 @@ const PaymentForm = ({
       }
     } catch (err) {
       setPaymentStatus('failed');
-      handlePaymentError(err);
+      setError(handlePaymentError(err));
     }
   };
 
@@ -128,11 +157,21 @@ const PaymentForm = ({
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Contact Information
         </label>
-        <div className="border rounded-md p-2">
+        <div className="border rounded-md p-2 min-h-[60px] overflow-visible">
           <LinkAuthenticationElement
-            onChange={(e) => setEmail(e.value.email)}
             className="w-full"
             aria-label="Email address"
+            options={{ defaultValues: { email: user?.email || '' } }}
+          />
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <label className="block text-sm font-medium text-gray-700 mb-2">Billing Address</label>
+        <div className="border rounded-md p-2 min-h-[120px] overflow-visible">
+          <AddressElement
+            options={addressElementOptions}
+            onChange={handleAddressChange}
           />
         </div>
       </div>
@@ -143,22 +182,30 @@ const PaymentForm = ({
         </label>
         <div className="border rounded-md p-2">
           <PaymentElement
-            options={{
-              wallets: { applePay: 'auto', googlePay: 'auto' },
-              layout: { type: 'tabs', defaultCollapsed: false },
-            }}
+            options={paymentElementOptions}
             onChange={(e) => {
               if (e.error) {
-                setError({
-                  code: e.error.code,
-                  message: e.error.message
-                });
+                setError(handlePaymentError(e));
               }
               else if (e.complete) setError(null);
             }}
             className="[&_input]:p-2 [&_input]:border [&_input]:rounded-md"
           />
         </div>
+      </div>
+
+      <div className="mb-4 flex items-start">
+        <input
+          type="checkbox"
+          id="consent"
+          checked={consentChecked}
+          onChange={e => setConsentChecked(e.target.checked)}
+          className="mr-2 mt-1"
+          required
+        />
+        <label htmlFor="consent" className="text-sm text-gray-700 select-none">
+          I agree to the <a href="/policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Terms of Service</a> and <a href="/refund-deferral-policies" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Refund Policy</a>.
+        </label>
       </div>
 
       <div aria-live="polite" style={{ minHeight: 40 }}>

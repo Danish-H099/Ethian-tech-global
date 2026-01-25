@@ -98,12 +98,15 @@ function Footer() {
                                     <div className='flex flex-col'>
                                         <div className="flex items-center gap-2">
                                             <img src="america.png" alt="American Flag Icon" className='w-6' />
-                                            <a href="tel:+14436758888" className="cursor-pointer">+1-443-675-8888 </a>
+                                            <a href="tel:+14435186186" className="cursor-pointer">+1-443-518-6186 </a>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <img src="india.png" alt="Indian Falg Icon" className='w-6' />
                                             <a href="tel:+917977571286 " className="cursor-pointer">+91-79775-71286 </a>
-
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <img src="whatsapp.png" alt="WhatsApp Icon" className='w-6' />
+                                            <a href="https://wa.me/14435186186" target="_blank" rel="noreferrer" className="cursor-pointer">+1-443-518-6186 </a>
                                         </div>
                                     </div>
                                 </div>
@@ -127,10 +130,10 @@ function Footer() {
                                 <p className="text-sm text-gray-300">© 2025. Ethian Tech. Ltd. All rights reserved.</p>
                             </div>
                             <div className="flex space-x-5">
-                                <a href="#" className="text-gray-300 text-2xl hover:text-[#D62A91] hover:scale-125 ease-in-out duration-200"><FontAwesomeIcon icon={faFacebook} className='text-2xl' /></a>
+                                <a href="https://www.facebook.com/profile.php?id=61578266693522" className="text-gray-300 text-2xl hover:text-[#D62A91] hover:scale-125 ease-in-out duration-200"><FontAwesomeIcon icon={faFacebook} className='text-2xl' /></a>
                                 <a href="#" className="text-gray-300 text-2xl hover:text-[#D62A91] hover:scale-125 ease-in-out duration-200"><FontAwesomeIcon icon={faYoutube} className='text-2xl' /></a>
                                 <a href="#" className="text-gray-300 text-2xl hover:text-[#D62A91] hover:scale-125 ease-in-out duration-200"><FontAwesomeIcon icon={faTwitter} className='text-2xl' /></a>
-                                <a href="#" className="text-gray-300 text-2xl hover:text-[#D62A91] hover:scale-125 ease-in-out duration-200"><FontAwesomeIcon icon={faLinkedin} className='text-2xl' /></a>
+                                <a href="https://www.linkedin.com/company/ethian-global-tech-llc/" className="text-gray-300 text-2xl hover:text-[#D62A91] hover:scale-125 ease-in-out duration-200"><FontAwesomeIcon icon={faLinkedin} className='text-2xl' /></a>
                             </div>
                         </div>
                     </div>

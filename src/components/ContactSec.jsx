@@ -110,11 +110,15 @@ return (
                         <div className='space-y-4'>
                             <div className='flex items-center space-x-2'>
                                 <img src="america.png" alt="American Flag Icon" className='w-6' />
-                                <a href="tel:+14436758888" className="text-base cursor-pointer">+1443-675-8888</a>
+                                <a href="tel:+14435186186" className="text-base cursor-pointer">+1443-518-6186</a>
                             </div>
                             <div className='flex items-center space-x-2'>
                                 <img src="india.png" alt="Indian Falg Icon" className='w-6' />
                                 <a href="tel:+917977571286 " className="text-base cursor-pointer">+91-7977571286 </a>
+                            </div>
+                            <div className='flex items-center space-x-2'>
+                                <img src="whatsapp.png" alt="WhatsApp Icon" className='w-6' />
+                                <a href="https://wa.me/14435186186" target="_blank" rel="noreferrer" className="text-base cursor-pointer">+1443-518-6186</a>
                             </div>
                             <div className='flex items-center space-x-2'>
                                 <img src="gmail.png" alt="Email Icon" className='w-6' />
@@ -122,7 +126,7 @@ return (
                             </div>
                         </div>
                         <div className='flex wrap items-center gap-4'>
-                            <a href="https://www.facebook.com" target="_blank" rel="noreferrer">
+                            <a href="https://www.facebook.com/profile.php?id=61578266693522" target="_blank" rel="noreferrer">
                                 <img src="facebook.png" alt="Facebook Icon" className='w-10' />
                             </a>
                             <a href="https://www.youtube.com" target="_blank" rel="noreferrer">
@@ -131,7 +135,7 @@ return (
                             <a href="https://www.twitter.com" target="_blank" rel="noreferrer">
                                 <img src="twitter.png" alt="Twitter Icon" className='w-10' />
                             </a>
-                            <a href="https://www.linkedin.com" target="_blank" rel="noreferrer">
+                            <a href="https://www.linkedin.com/company/ethian-global-tech-llc/" target="_blank" rel="noreferrer">
                                 <img src="linkedin.png" alt="LinkedIn Icon" className='w-10' />
                             </a>
                         </div>

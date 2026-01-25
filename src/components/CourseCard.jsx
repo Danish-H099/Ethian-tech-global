@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AOS from "aos";
 import { 
@@ -6,11 +6,10 @@ import {
   calculatePaymentDetails, 
   formatCurrency, 
   getInstallmentOptions,
-  getDefaultPaymentDetails
 } from "../utils/installmentUtils";
 import { useCoursePurchases } from '../context/CoursePurchasesContext';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faAnglesRight, faArrowUpRightDots, faBriefcase, faChalkboard, faChalkboardUser, faMagnifyingGlass, faMoneyCheck, faPencil, faUserGroup, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faAnglesRight, faArrowUpRightDots, faBriefcase, faChalkboard, faChalkboardUser, faMagnifyingGlass, faMoneyCheck, faPencil, faUserGroup, faXmark, faTag, faTimesCircle } from '@fortawesome/free-solid-svg-icons';
 import { Swiper, SwiperSlide } from "swiper/react";
 import "swiper/css";
 import "swiper/css/pagination";
@@ -19,6 +18,9 @@ import { NavLink } from "react-router-dom";
 import emailjs from '@emailjs/browser';
 import toast from 'react-hot-toast';
 import CoursePurchaseButton from './CoursePurchaseButton';
+import Cookies from 'js-cookie';
+import { useAuth } from '../context/AuthContext';
+import axios from 'axios'; // Added axios import
 
 const services = [
   {
@@ -48,9 +50,39 @@ const services = [
   },
 ];
 
+
+const fetchCurrencyInfo = async (isLoggedIn) => {
+  if (isLoggedIn) {
+    // Fetch from backend for logged-in user
+    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/auth/currency`, { credentials: 'include' });
+    if (res.ok) return await res.json();
+    return null;
+  } else {
+    // Guest: check cookie first
+    const cookie = Cookies.get('guestCurrencyInfo');
+    if (cookie) {
+      try {
+        const parsed = JSON.parse(cookie);
+        if (parsed.timestamp && Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+          return parsed;
+        }
+      } catch {}
+    }
+    // Fetch from backend guest endpoint
+    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/auth/guest/currency`);
+    if (res.ok) {
+      const data = await res.json();
+      const info = { ...data, timestamp: Date.now() };
+      Cookies.set('guestCurrencyInfo', JSON.stringify(info), { expires: 1 });
+      return info;
+    }
+    return { country: undefined, countryCode: 'US', currency: 'USD', timestamp: Date.now() };
+  }
+};
+
 const CourseCard = () => {
-  const navigate = useNavigate();
-  const { getPurchaseStatus, getNextPaymentInfo } = useCoursePurchases();
+  const { user } = useAuth();
+  const { getPurchaseStatus, getCouponDetails, purchases, getNextPaymentInfo } = useCoursePurchases();
   const [selectedInstallments, setSelectedInstallments] = useState(1);
   const [isAutomatic, setIsAutomatic] = useState(true);
   const [showPaymentDetails, setShowPaymentDetails] = useState(false);
@@ -62,22 +94,72 @@ const CourseCard = () => {
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  const coursePrice = 900; // Price in USD
-  const currency = 'USD';
-  const service = 'advanced_generative_ai_course';
-  const courseId = 'advanced_generative_ai_course';
+  const [userCurrency, setUserCurrency] = useState({ country: undefined, countryCode: 'US', currency: 'USD' });
+  const [appliedCoupon, setAppliedCoupon] = useState(null); // Store full coupon object
+  const [couponInput, setCouponInput] = useState(''); // Coupon input field
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
+  const [autoAppliedCoupon, setAutoAppliedCoupon] = useState(false); // Track if coupon is auto-applied
 
+  // Calculate purchase status and nextPaymentInfo for this specific course
   const purchaseStatus = getPurchaseStatus(PAYMENT_CONFIG.courseId);
   const nextPaymentInfo = getNextPaymentInfo(PAYMENT_CONFIG.courseId);
 
-  // Set default installment based on current plan
-  useEffect(() => {
-    if (purchaseStatus === 'in_progress' && nextPaymentInfo) {
-      setSelectedInstallments(nextPaymentInfo.totalInstallments);
+  // Coupon apply handler
+  const handleApplyCoupon = async () => {
+    if (!couponInput.trim()) {
+      toast.error('Please enter a coupon or referral code');
+      return;
     }
-  }, [purchaseStatus, nextPaymentInfo]);
+    setApplyingCoupon(true);
+    try {
+      // Check if it's a referral code (starts with ETHIAN-)
+      if (couponInput.trim().toUpperCase().startsWith("ETHIAN-")) {
+        // Referral code logic
+        const code = couponInput.trim();
+        const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/payments/validate-referral`, { 
+          code,
+          courseId: PAYMENT_CONFIG.courseId 
+        }, {withCredentials: true});
+        setAppliedCoupon({
+          couponId: null, 
+          couponCode: response.data.couponCode, 
+          discountType: response.data.discountType,
+          discountValue: response.data.discountValue,
+          isReferral: true, // Flag to differentiate
+          message: response.data.message
+        });
+        toast.success(response.data.message || 'Referral code applied!');
+      } else {
+        // Stripe coupon logic
+        const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/payments/validate-coupon`, { code: couponInput.trim() });
+        setAppliedCoupon({
+          couponId: response.data.couponId,
+          couponCode: response.data.couponCode,
+          discountType: response.data.discountType,
+          discountValue: response.data.discountValue,
+          isReferral: false, // Flag to differentiate
+          message: response.data.message
+        });
+        toast.success(response.data.message || 'Coupon applied!');
+    }
+    } catch (error) {
+      setAppliedCoupon(null);
+      toast.error(error.response?.data?.message || 'Invalid code');
+    } finally {
+      setApplyingCoupon(false);
+    }
+  };
 
+  // Remove coupon handler
+  const handleRemoveCoupon = () => {
+    if (!autoAppliedCoupon) {
+      setAppliedCoupon(null);
+      setCouponInput('');
+      toast.success('Coupon removed');
+    }
+  };
+
+  /* Brochure Form */
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prevState => ({
@@ -99,11 +181,9 @@ const CourseCard = () => {
       );
 
       // Log success
-      console.log('Email sent successfully');
       toast.success('Form submitted successfully!');
       setIsSubmitted(true);
     } catch (error) {
-      console.error('Error sending email:', error);
       toast.error('Failed to submit form. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -140,10 +220,230 @@ const CourseCard = () => {
     };
   }, []);
 
+  // Set default installment based on current plan
+  useEffect(() => {
+    if (purchaseStatus === 'in_progress' && nextPaymentInfo) {
+      setSelectedInstallments(nextPaymentInfo.totalInstallments);
+    }
+  }, [purchaseStatus, nextPaymentInfo]);
+
+  // Auto-apply existing coupon for in-progress installments
+  useEffect(() => {
+    if (purchaseStatus === 'in_progress') {
+      const existingCoupon = getCouponDetails(PAYMENT_CONFIG.courseId);
+      
+      if (existingCoupon) {
+        setAppliedCoupon({
+          couponId: existingCoupon.couponId || null, // Use actual couponId if available
+          couponCode: existingCoupon.couponCode,
+          discountType: existingCoupon.discountType,
+          discountValue: existingCoupon.discountValue,
+          isReferral: existingCoupon.isReferral,
+          message: 'Existing discount applied'
+        });
+        setAutoAppliedCoupon(true);
+      }
+    }
+  }, [purchaseStatus, getCouponDetails]);
+
+  // Auto-apply referrer coupon for eligible users
+  useEffect(() => {
+    const checkReferrerEligibility = async () => {
+      if (!user || purchaseStatus !== 'none') {
+        return;
+      }
+
+      try {
+        const response = await axios.get(
+          `${import.meta.env.VITE_API_BASE_URL}/api/payments/referrer-coupon/${PAYMENT_CONFIG.courseId}`,
+          { withCredentials: true }
+        );
+
+        if (response.data.valid) {
+          setAppliedCoupon({
+            couponId: null,
+            couponCode: response.data.couponCode,
+            discountType: response.data.discountType,
+            discountValue: response.data.discountValue,
+            isReferral: false, // This is a referrer coupon, not a referral code
+            message: response.data.message
+          });
+          setAutoAppliedCoupon(true);
+          toast.success(response.data.message || 'Referrer discount applied!');
+        }
+      } catch (error) {
+      }
+    };
+
+    checkReferrerEligibility();
+  }, [user, purchaseStatus]);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchCurrencyInfo(!!user).then(info => {
+      if (isMounted && info) setUserCurrency(info);
+      if (user) Cookies.remove('guestCurrencyInfo'); 
+    });
+    return () => { isMounted = false; };
+  }, [user]);
+
+  const renderCouponInput = () => {
+    // Hide coupon input for completed, in progress, pending, processing payments, or when auto-applied coupon exists
+    if (purchaseStatus === 'completed' || 
+        purchaseStatus === 'in_progress' || 
+        purchaseStatus === 'pending' || 
+        purchaseStatus === 'processing' ||
+        (autoAppliedCoupon && appliedCoupon)) {
+      return null;
+    }
+    
+    return (
+      <div className="mb-4 w-full">
+        <div className="flex items-center gap-2 w-full">
+          <input
+            type="text"
+            value={couponInput}
+            onChange={e => setCouponInput(e.target.value)}
+            placeholder="Enter coupon or referral code"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 flex-grow min-w-0"
+            disabled={applyingCoupon || !!appliedCoupon}
+          />
+          <button
+            type="button"
+            onClick={handleApplyCoupon}
+            disabled={applyingCoupon || !couponInput.trim() || !!appliedCoupon}
+            className="bg-[#D62A91] text-white px-4 py-2 rounded-md hover:bg-pink-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex-shrink-0"
+          >
+            {applyingCoupon ? (
+              <span className="flex items-center">
+                <svg className="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Applying...
+              </span>
+            ) : 'Apply'}
+          </button>
+        </div>
+        {appliedCoupon && (
+          <div className={`mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${
+            appliedCoupon.isReferral 
+              ? 'bg-blue-50 border border-blue-300 text-blue-800' 
+              : 'bg-green-50 border border-green-300 text-green-800'
+          }`}>
+            <FontAwesomeIcon icon={faTag} className={`mr-1 ${
+              appliedCoupon.isReferral ? 'text-blue-500' : 'text-green-500'
+            }`} />
+            <span className="font-bold">{appliedCoupon.couponCode}</span>
+            <span>
+              {appliedCoupon.discountType === 'percent'
+                ? `${appliedCoupon.discountValue}% off`
+                : `₹${appliedCoupon.discountValue} off`}
+            </span>
+            <button
+              type="button"
+              onClick={handleRemoveCoupon}
+              className={`ml-1 hover:text-red-500 focus:outline-none ${
+                autoAppliedCoupon 
+                  ? 'opacity-50 cursor-not-allowed' 
+                  : appliedCoupon.isReferral ? 'text-blue-600' : 'text-green-600'
+              }`}
+              aria-label="Remove coupon"
+              disabled={autoAppliedCoupon}
+            >
+              <FontAwesomeIcon icon={faTimesCircle} />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const renderReferralCode = () => {
+    // Only show referral code if user is logged in, has no purchases, and no coupon is applied
+    if (!user || 
+        purchaseStatus !== 'none' || 
+        appliedCoupon || 
+        !user.referralCode) {
+      return null;
+    }
+
+    const handleCopyCode = () => {
+      navigator.clipboard.writeText(user.referralCode);
+      toast.success('Referral code copied!');
+    };
+
+    return (
+      <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg">
+        <div className="flex-1 flex items-center justify-between gap-2 mb-2">
+          <p className="text-sm font-medium text-gray-800">
+            Share your referral code
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="bg-white px-3 py-1 rounded border text-sm font-mono text-nowrap text-blue-600 border-blue-300">
+              {user.referralCode}
+            </code>
+            <button
+              onClick={handleCopyCode}
+              className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-600">
+          You get <span className="font-semibold text-green-600">15% off. </span>
+          Your friends gets <span className="font-semibold text-green-600">10% off</span>
+        </p>
+      </div>
+    );
+  }
+
+  const renderAutoAppliedCoupon = () => {
+    // Show auto-applied coupon for in-progress installments OR when referrer coupon is auto-applied
+    if ((purchaseStatus === 'in_progress' && appliedCoupon) || (autoAppliedCoupon && appliedCoupon)) {
+      // Determine styling based on coupon type
+      const isReferral = appliedCoupon.isReferral;
+      const bgColor = isReferral ? 'bg-blue-50' : 'bg-green-50';
+      const borderColor = isReferral ? 'border-blue-300' : 'border-green-300';
+      const textColor = isReferral ? 'text-blue-800' : 'text-green-800';
+      const iconColor = isReferral ? 'text-blue-500' : 'text-green-500';
+      const labelColor = isReferral ? 'text-blue-600' : 'text-green-600';
+      
+      // Determine label text based on context
+      let labelText = '';
+      if (purchaseStatus === 'in_progress') {
+        labelText = isReferral ? '(Auto-applied Referral)' : '(Auto-applied Coupon)';
+    } else {
+        labelText = isReferral ? '(Auto-applied Referral)' : '(Auto-applied Referrer Discount)';
+      }
+      
+      return (
+        <div className="mb-4 w-full">
+          <div className={`inline-flex items-center gap-2 ${bgColor} border ${borderColor} ${textColor} rounded-full px-3 py-1 text-xs font-semibold shadow-sm`}>
+            <FontAwesomeIcon icon={faTag} className={`mr-1 ${iconColor}`} />
+            <span className="font-bold">{appliedCoupon.couponCode}</span>
+            <span>
+              {appliedCoupon.discountType === 'percent'
+                ? `${appliedCoupon.discountValue}% off`
+                : `₹${appliedCoupon.discountValue} off`}
+            </span>
+            <span className={`${labelColor} text-xs`}>{labelText}</span>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   const renderPaymentOptions = () => {
     if (purchaseStatus === 'completed') {
       return null; // Don't show payment options for completed purchases
     }
+
+    // For in-progress installments, only show the current plan
+    const isInProgress = purchaseStatus === 'in_progress' && nextPaymentInfo;
+    const currentInstallments = isInProgress ? nextPaymentInfo.totalInstallments : selectedInstallments;
 
     return (
       <div className="mb-6">
@@ -153,9 +453,19 @@ const CourseCard = () => {
         <div className="relative">
           <div className="flex overflow-x-auto pb-4 gap-2 sm:gap-3 custom-scrollbar" style={{ scrollbarWidth: 'thin', scrollbarColor: '#e055a9 #f1f1f1' }}>
             {getInstallmentOptions().map(option => {
-              const paymentDetails = calculatePaymentDetails(option.value);
-              const isInProgress = purchaseStatus === 'in_progress' && nextPaymentInfo;
-              const isCurrentPlan = isInProgress && option.value === nextPaymentInfo?.totalInstallments;
+              const paymentDetails = calculatePaymentDetails(option.value, userCurrency);
+              let discounted = paymentDetails.perInstallmentAmount;
+              let totalDiscounted = paymentDetails.totalAmount;
+              if (appliedCoupon && appliedCoupon.discountType === 'percent') {
+                discounted = Math.round(paymentDetails.perInstallmentAmount * (1 - appliedCoupon.discountValue / 100));
+                totalDiscounted = discounted * option.value;
+              } else if (appliedCoupon && appliedCoupon.discountType === 'amount') {
+                discounted = paymentDetails.perInstallmentAmount - appliedCoupon.discountValue;
+                totalDiscounted = discounted * option.value;
+              }
+              
+              // For in-progress installments, only allow the current plan
+              const isCurrentPlan = isInProgress && option.value === currentInstallments;
               const isDisabled = isInProgress && !isCurrentPlan;
 
               return (
@@ -197,22 +507,27 @@ const CourseCard = () => {
                       </div>
                     </div>
                     <div className="text-xs sm:text-sm space-y-1">
-                      {option.value === 1 ? (
-                        <>
-                          <span className="text-[#D62A91] font-medium block text-base sm:text-lg">
-                            {formatCurrency(paymentDetails.perInstallmentAmount)}
+                      <p className="text-gray-600">{option.description}</p>
+                        {appliedCoupon && discounted < paymentDetails.perInstallmentAmount ? (
+                          <div>
+                            <span className="line-through text-gray-400 mr-2">{formatCurrency(paymentDetails.perInstallmentAmount, userCurrency.currency)}</span>
+                            <span className={`text-[#D62A91] ${option.value===1 && "text-sm sm:text-lg"} font-bold`}>{formatCurrency(discounted, userCurrency.currency)}{option.value>1 && ` /mo`}</span>
+                          </div>
+                        ) : (
+                          <p className={`text-[#D62A91] ${option.value===1 && "text-sm sm:text-lg"} font-bold`}>{formatCurrency(paymentDetails.perInstallmentAmount, userCurrency.currency)}{option.value>1 && ` /mo`}</p>
+                        )}
+                      {option.value > 1 && (
+                        <div>
+                          <span className="text-gray-600">Total: </span>
+                          {appliedCoupon && totalDiscounted < paymentDetails.totalAmount ? (
+                            <span>
+                              <span className="line-through text-gray-400 mx-2">{formatCurrency(paymentDetails.totalAmount, userCurrency.currency)}</span>
+                              <span className="text-[#D62A91] text-sm sm:text-lg font-bold">{formatCurrency(totalDiscounted, userCurrency.currency)}</span>
                           </span>
-                          <span className="text-gray-600 text-xs">{option.description}</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-gray-600 block">
-                            {formatCurrency(paymentDetails.perInstallmentAmount)}/mo
-                          </span>
-                          <span className="text-[#D62A91] font-medium block">
-                            Total: {formatCurrency(paymentDetails.totalAmount)}
-                          </span>
-                        </>
+                          ) : (
+                            <span className="text-[#D62A91] text-sm sm:text-lg font-bold">{formatCurrency(paymentDetails.totalAmount, userCurrency.currency)}</span>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -233,7 +548,17 @@ const CourseCard = () => {
 
     const isInProgress = purchaseStatus === 'in_progress' && nextPaymentInfo;
     const currentInstallments = isInProgress ? nextPaymentInfo.totalInstallments : selectedInstallments;
-    const paymentDetails = calculatePaymentDetails(currentInstallments);
+    const paymentDetails = calculatePaymentDetails(currentInstallments, userCurrency);
+    let discounted = paymentDetails.perInstallmentAmount;
+    let totalDiscounted = paymentDetails.totalAmount;
+    if (appliedCoupon && appliedCoupon.discountType === 'percent') {
+      discounted = Math.round(paymentDetails.perInstallmentAmount * (1 - appliedCoupon.discountValue / 100));
+      totalDiscounted = discounted * currentInstallments;
+    } else if (appliedCoupon && appliedCoupon.discountType === 'amount') {
+      discounted = paymentDetails.perInstallmentAmount - appliedCoupon.discountValue;
+      totalDiscounted = discounted * currentInstallments;
+    }
+    const discountAmount = paymentDetails.totalAmount - totalDiscounted;
 
     return (
       <div className="my-4">
@@ -245,15 +570,25 @@ const CourseCard = () => {
             <div className="flex flex-col items-start min-w-0 flex-1">
               <span className="text-xs sm:text-sm text-gray-600">Selected Plan</span>
               <span className="text-sm sm:text-lg font-semibold text-gray-900 truncate">
-                {currentInstallments === 1 
-                  ? formatCurrency(paymentDetails.perInstallmentAmount)
-                  : `${formatCurrency(paymentDetails.perInstallmentAmount)} × ${currentInstallments} months`
+                {/* Only show discounted price if coupon is applied */}
+                {appliedCoupon && discounted < paymentDetails.perInstallmentAmount
+                  ? (currentInstallments === 1
+                      ? formatCurrency(discounted, userCurrency.currency)
+                      : `${formatCurrency(discounted, userCurrency.currency)} × ${currentInstallments} months`
+                    )
+                  : (currentInstallments === 1
+                      ? formatCurrency(paymentDetails.perInstallmentAmount, userCurrency.currency)
+                      : `${formatCurrency(paymentDetails.perInstallmentAmount, userCurrency.currency)} × ${currentInstallments} months`
+                    )
                 }
               </span>
             </div>
             {currentInstallments > 1 && (
               <span className="text-xs sm:text-sm text-gray-500 flex-shrink-0">
-                (Total: {formatCurrency(paymentDetails.totalAmount)})
+                (Total: {appliedCoupon && totalDiscounted < paymentDetails.totalAmount
+                  ? formatCurrency(totalDiscounted, userCurrency.currency)
+                  : formatCurrency(paymentDetails.totalAmount, userCurrency.currency)
+                })
               </span>
             )}
           </div>
@@ -268,43 +603,54 @@ const CourseCard = () => {
           <div className="mt-2 p-3 sm:p-4 bg-gradient-to-br from-gray-50 to-white rounded-xl border border-gray-200">
             <div className="space-y-2 text-xs sm:text-sm">
               {currentInstallments === 1 ? (
-                <div className="flex justify-between">
+              <div className="flex justify-between">
                   <span className="text-gray-600">Total Amount:</span>
-                  <span className="font-medium">{formatCurrency(paymentDetails.perInstallmentAmount)}</span>
-                </div>
+                  <span className="font-medium">
+                    {appliedCoupon && discounted < paymentDetails.perInstallmentAmount
+                      ? formatCurrency(discounted, userCurrency.currency)
+                      : formatCurrency(paymentDetails.perInstallmentAmount, userCurrency.currency)
+                    }
+                  </span>
+              </div>
               ) : (
                 <>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Per Installment:</span>
-                    <span className="font-medium">{formatCurrency(paymentDetails.perInstallmentAmount)}</span>
+                    <span className="font-medium">
+                      {formatCurrency(paymentDetails.perInstallmentAmount, userCurrency.currency)}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Total Amount:</span>
-                    <span className="font-medium">{formatCurrency(paymentDetails.totalAmount)}</span>
+                    <span className="font-medium">
+                      {formatCurrency(paymentDetails.totalAmount, userCurrency.currency)}
+                    </span>
                   </div>
-                  {isInProgress && nextPaymentInfo && (
-                    <>
-                      <div className="pt-2 border-t border-gray-200">
+                </>
+              )}
+              {appliedCoupon && discountAmount > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Discount:</span>
+                    <span className="text-green-700 font-semibold">- {formatCurrency(discountAmount, userCurrency.currency)}</span>
+                  </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Due Date:</span>
-                          <span className="font-medium">
-                            {new Date(nextPaymentInfo.nextPaymentDate).toLocaleDateString()}
-                          </span>
-                        </div>
+                    <span className="font-bold text-gray-600">Final Price:</span>
+                    <span className="font-bold text-[#D62A91]">{formatCurrency(totalDiscounted, userCurrency.currency)}</span>
                       </div>
                     </>
                   )}
-                  {!isInProgress && (
+              {!isInProgress && currentInstallments > 1 && (
                     <div className="pt-2 border-t border-gray-200">
-                      <label className="flex items-start space-x-2 cursor-pointer">
+                  <label className="flex items-start space-x-2 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={isAutomatic}
                           onChange={(e) => setIsAutomatic(e.target.checked)}
-                          className="form-checkbox h-3 w-3 sm:h-4 sm:w-4 text-pink-600 rounded border-gray-300 focus:ring-pink-500 mt-0.5 flex-shrink-0"
+                      className="form-checkbox h-3 w-3 sm:h-4 sm:w-4 text-pink-600 rounded border-gray-300 focus:ring-pink-500 mt-0.5 flex-shrink-0"
                         />
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs sm:text-sm text-gray-700">
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs sm:text-sm text-gray-700">
                             Enable automatic monthly payments
                           </span>
                           <span className="text-xs text-gray-500">
@@ -314,8 +660,6 @@ const CourseCard = () => {
                       </label>
                     </div>
                   )}
-                </>
-              )}
             </div>
           </div>
         )}
@@ -343,19 +687,21 @@ const CourseCard = () => {
       );
     }
 
-    const paymentDetails = calculatePaymentDetails(selectedInstallments);
+    const paymentDetails = calculatePaymentDetails(selectedInstallments, userCurrency);
 
     return (
       <div className="flex flex-col gap-4 mb-6">
-        <CoursePurchaseButton
+          <CoursePurchaseButton
           courseId={paymentDetails.courseId}
           price={selectedInstallments === 1 ? paymentDetails.perInstallmentAmount : paymentDetails.totalAmount}
           currency={paymentDetails.currency}
           service={paymentDetails.service}
           className="w-full bg-[#D62A91] text-white px-4 sm:px-6 py-3 rounded-lg font-medium hover:bg-pink-600 transition-colors text-sm sm:text-base"
-          selectedInstallments={selectedInstallments}
-          isAutomatic={isAutomatic}
-        />
+            selectedInstallments={selectedInstallments}
+            isAutomatic={isAutomatic}
+          appliedCoupon={appliedCoupon}
+          userCurrency={userCurrency}
+          />
         {purchaseStatus === 'in_progress' && nextPaymentInfo && (
           <div className="text-xs sm:text-sm text-gray-600 text-center">
             Next payment due in {Math.ceil((nextPaymentInfo.nextPaymentDate - new Date()) / (1000 * 60 * 60 * 24))} days
@@ -385,8 +731,7 @@ const CourseCard = () => {
         </div>
         
         <div className="grid lg:grid-cols-2 gap-0 lg:gap-8">
-          {/* Right Image Section - now comes first on mobile */}
-          <div className="relative h-64 sm:h-80 lg:h-full min-h-[300px] sm:min-h-[400px] max-h-[calc(100vh-8rem)] sm:max-h-[calc(100vh-10rem)] lg:max-h-[calc(100vh-12rem)] order-1 lg:order-2">
+          <div className="relative h-64 sm:h-80 lg:h-[500px] order-1 lg:order-2">
             <img
               src="AI_Course_img.jpg"
               alt="Generative AI Course"
@@ -400,8 +745,7 @@ const CourseCard = () => {
               </div>
             </div>
           </div>
-          {/* Left Content - now comes second on mobile */}
-          <div className="p-4 sm:p-6 lg:p-8 overflow-y-auto max-h-[calc(100vh-8rem)] sm:max-h-[calc(100vh-10rem)] lg:max-h-[calc(100vh-12rem)] order-2 lg:order-1">
+          <div className="p-4 sm:p-6 lg:p-8 order-2 lg:order-1">
             <h2 className="text-2xl sm:text-3xl font-bold leading-tight mb-4 mt-4 sm:mt-0">
               <span className="text-[#D62A91]">Advanced Generative AI</span>
               <br />
@@ -411,23 +755,23 @@ const CourseCard = () => {
             {!showEnrollment ? (
               <>
                 <p className="text-gray-600 text-sm sm:text-base my-2 leading-relaxed">
-                  Master the skills that shape the future of technology with the Advanced Certificate Program in Generative AI, a 5-month generative AI course by Ethiantech.
-                </p>
+              Master the skills that shape the future of technology with the Advanced Certificate Program in Generative AI, a 5-month generative AI course by Ethiantech.
+            </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-2 mb-6 sm:mb-8">
                   <div className="bg-gray-50 p-3 sm:p-4 rounded-lg">
                     <p className="text-gray-500 text-xs sm:text-sm mb-1">Type</p>
                     <p className="text-[#D62A91] font-semibold text-sm sm:text-base">Advanced Certificate</p>
-                  </div>
+              </div>
                   <div className="bg-gray-50 p-3 sm:p-4 rounded-lg">
                     <p className="text-gray-500 text-xs sm:text-sm mb-1">Admission Deadline</p>
-                    <p className="text-[#D62A91] font-semibold text-sm sm:text-base">12-July-2025</p>
-                  </div>
+                    <p className="text-[#D62A91] font-semibold text-sm sm:text-base">Jan 10, 2026</p>
+              </div>
                   <div className="bg-gray-50 p-3 sm:p-4 rounded-lg sm:col-span-2 lg:col-span-1">
                     <p className="text-gray-500 text-xs sm:text-sm mb-1">Duration</p>
                     <p className="text-[#D62A91] font-semibold text-sm sm:text-base">5 Months</p>
-                  </div>
-                </div>
+              </div>
+            </div>
 
                 <div className="flex flex-col sm:flex-row gap-3 w-full">
                   <button 
@@ -446,8 +790,11 @@ const CourseCard = () => {
               </>
             ) : (
               <div className="space-y-4">
-                {renderPaymentOptions()}
-                {renderInstallmentDetails()}
+            {renderPaymentOptions()}
+                {renderCouponInput()}
+                {renderReferralCode()}
+                {renderAutoAppliedCoupon()}
+            {renderInstallmentDetails()}
                 <div className="border-t border-gray-200 pt-4 mb-6">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="text-sm text-gray-600">
@@ -461,27 +808,22 @@ const CourseCard = () => {
                         <FontAwesomeIcon icon={faAnglesRight} className="text-xs" />
                       </NavLink>
                     </div>
-                  </div>
-                </div>
-                {renderPaymentButtons()}
+            </div>
+          </div>
+            {renderPaymentButtons()}
               </div>
             )}
 
             <div className="space-y-2 mt-4">
-              {purchaseStatus === 'completed' ? (
+              {purchaseStatus === 'completed' && (
                 <p className="text-gray-600 text-xs sm:text-sm font-medium flex items-center gap-2">
                   <span className="text-base sm:text-lg">📱</span>
                   <span>You will be added to the course WhatsApp group shortly. Please keep your phone number updated.</span>
-                </p>
-              ) : (
-                <p className="text-red-600 text-xs sm:text-sm font-medium flex items-center gap-2">
-                  <span className="text-base sm:text-lg">⚠️</span>
-                  <span>Hurry! <b>862</b> people have already applied in last 1 month</span>
-                </p>
+              </p>
               )}
               <p className="text-gray-500 text-xs sm:text-sm flex items-center gap-2">
                 <span className="text-base sm:text-lg">📞</span>
-                <span>For enquiries: <span className="font-semibold break-all">+1-443-675-8888</span> or <span className="font-semibold break-all">info@ethiantech.com</span></span>
+                <span>For enquiries, call/whatsApp <span className="font-semibold">+1-443-518-6186</span> or Email <span className="font-semibold">info@ethiantech.com</span></span>
               </p>
             </div>
           </div>
@@ -674,6 +1016,22 @@ const CourseCard = () => {
         </div>
 
       </div>
+
+      <div className="mt-4 p-3 sm:p-4" data-aos="fade-up">
+        <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0 }}>
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/8E7BuB3yJwk?rel=0&modestbranding=1&playsinline=1`}
+            title="Advanced Generative AI - Course Intro"
+            frameborder="0"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allowFullScreen
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, borderRadius: '10px' }}
+          />
+        </div>
+      </div>
+
     </div>
   );
 };
