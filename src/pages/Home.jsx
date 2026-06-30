@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Helmet } from "react-helmet-async";
 import AOS from "aos";
 import "aos/dist/aos.css";
 
@@ -17,7 +18,7 @@ function Home() {
 
     return (
         <>
-            <head>
+            <Helmet>
                 <title>Ethian Tech Global - Innovate Transform Accelerate</title>
                 <meta name="description" content="Your IT Partner for a Digital Future, Tailored for your Growth." />
                 <meta name="keywords" content="IT Consulting, Web Development, Mobile App Development, AI Solutions, Cloud Migration, DevOps, Product Consulting, UI/UX Design" />
@@ -26,7 +27,7 @@ function Home() {
                 <meta property="og:image" content="landingPageImg.webp" />
                 <meta property="og:url" content="https://www.ethiantechglobal.com" />
                 <meta name="twitter:card" content="summary_large_image" />
-            </head>
+            </Helmet>
 
             <Navbar />
             <header className='bg-cover bg-no-repeat bg-center sm:w-full h-[70vh]' style={{ backgroundImage: "url('landing-page.webp')" }}>
@@ -42,7 +43,8 @@ function Home() {
             <main>
                 <OurServices />
                 <WhyChooseUs />
-                <Members />
+                {/* Not needed for now */}
+                {/* <Members />s */}
                 <div className='w-11/12 sm:w-5/6 lg:w-4/5 max-w-screen-lg mx-auto my-8 px-6 pb-6 md:px-8 md:pb-12 flex flex-col items-center md:flex-row justify-center gap-8' data-aos="fade-up">
                     <p className='font-sans text-blue-900 text-lg md:text-xl space-y-1 font-semibold'>
                         Got a Tech Skill? Interested in a Career with us?
